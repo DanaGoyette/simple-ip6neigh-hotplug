@@ -81,10 +81,12 @@ name_from_this_hosts_file=$(echo "$entry_from_this_hosts_file" | awk '{print $2}
 if [ "$ACTION" = "add" ]; then
     chosen_action="add"
     case "$IPADDR" in
-
         fe8*|fc*|fd*|ff*)
             # non-global (link-local, unique-local, or multicast) IPv6 address
             # logmsg "debug" "non-global" "$LOG_LINE"
+            chosen_action="remove"
+            ;;
+        169.254.*.*)
             chosen_action="remove"
             ;;
         *.*.*.*)
