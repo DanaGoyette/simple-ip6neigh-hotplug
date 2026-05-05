@@ -1,0 +1,122 @@
+#!/bin/sh
+# this is NOT bash syntax, it's a POSIX shell script
+
+ETHERS_FILE="/etc/ethers"
+LEASES_FILE="/tmp/dhcp.leases"
+NMAP_MAC_PREFIXES="/usr/share/nmap/nmap-mac-prefixes*"
+
+# Function to find prefix from MAC address
+try_find_prefix() {
+	# for each line where the first field (the oui) matches, print the remaining fields
+	# with spaces between fields and newline after the last field
+	grep -hi "^$1" $NMAP_MAC_PREFIXES | head -n1
+}
+
+trim_noise() {
+	# Remove some extraneous stuff from the oui name
+	local name="$1"
+	name=$(echo "$name" | sed -E 's/\(.*?)$//' | sed -E 's/ *$//')
+	name=$(echo "$name" | sed -E 's/ *Gmbh//i' | sed -E 's/ *$//')
+	name=$(echo "$name" | sed -E 's/ *(Technology|Technologies)$//i' | sed -E 's/ *$//')
+	echo "$name"
+}
+
+# Function to find the OUI name from a MAC address
+find_oui_name() {
+	mac_prefix=$(awk -v mac_prefix="$1" 'BEGIN{gsub(/[:-]/,"",mac_prefix); print toupper(mac_prefix)}')
+
+	shallow_result=$(try_find_prefix "${mac_prefix:0:6}")
+	shallow_name="${shallow_result#* }" # delete OUI, keep name
+	if [ "$shallow_name" = "Ieee Registration Authority" ]; then
+		for prefixlen in $(seq 7 9); do
+			prefix_part=${mac_prefix:0:$prefixlen}
+			result=$(try_find_prefix "$prefix_part")
+			if [ -n "$result" ]; then
+				name=${result#* } # delete OUI, keep name
+				name=$(trim_noise "$name")
+				oui=${result%% *} # delete name, keep OUI
+				echo "$name ($oui)"
+				return 0
+			fi
+		done
+	elif [ -n "$shallow_name" ]; then
+		echo "$(trim_noise "$shallow_name")"
+		return 0
+	elif [ "$((0x${mac_prefix:0:2} & 0x02))" != 0 ]; then
+		#Returns LocalAdmin as name and success.
+		echo 'LocalAdmin'
+		return 0
+	else
+		return 1
+	fi
+}
+
+# Function to search /etc/ethers for an existing name for the MAC address
+find_ethers_name() {
+	local mac=${1//-/:}
+	# the format is: mac_address name
+	awk -v mac="$mac" 'tolower($1) == tolower(mac) { print $2; exit }' $ETHERS_FILE
+}
+
+# Function to search /tmp/dhcp.leases for an existing name for the MAC address
+find_dhcpv4_name_by_mac() {
+	local mac=${1//-/:}
+	# the leases file format is: leasetime mac_address ip_address hostname client-id
+	name=$(awk -v mac="$mac" 'tolower($2) == tolower(mac) { print $4; exit }' $LEASES_FILE)
+	if [ -n "$name" -a "$name" != "*" ]; then
+		echo "$name"
+		return 0
+	fi
+	return 1
+}
+
+find_ip_name_in_files() {
+	local ip="$1"
+	shift
+	name=$(awk -v ip="$ip" '$0 !~ /^#/ && tolower($1) == tolower(ip) { print $2; exit }' "$@")
+	if [ -n "$name" ]; then
+		echo "$name"
+		return 0
+	fi
+	return 1
+}
+
+create_oui_hostname() {
+	local oui_name="$1"
+	local mac_addr=${2//-/:}
+	local name_all="$3"
+
+	mac_lower=$(echo $mac_addr | awk '{print tolower($0)}')
+	mac_dash="${mac_lower//:/-}"
+	oui_name=$(find_oui_name "$mac_addr")
+
+	case "${oui_name}" in
+		"InPro Comm*")
+			prefix=InProComm
+			echo "${prefix}-${mac_dash:9}"
+			;;
+		Espressif*)
+			prefix=Espressif
+			echo "${prefix}-${mac_dash}"
+			;;
+		Amazon*)
+			prefix=Amazon
+			echo "${prefix}-${mac_dash}"
+			;;
+		'Raspberry Pi '*)
+			prefix=RaspberryPi
+			echo "${prefix}-${mac_dash}"
+			;;
+	#	Apple|Apple*)
+	#		prefix=Apple
+	#		mac_name="${prefix}-${mac_dash}"
+	#		;;
+		*)
+			if [ -n "$oui_name" -a -n "$name_all" ]; then
+				# take the part before any spaces or parentheses or other weird stuff
+				oui_name=${oui_name%%[ ()<>.,]*}
+				echo "${oui_name}-${mac_dash}";
+			fi
+			;;
+	esac
+}

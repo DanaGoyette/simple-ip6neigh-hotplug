@@ -1,0 +1,22 @@
+#!/bin/sh
+
+if [ -z "$HOTPLUG_TYPE" ]; then
+	HOTPLUG_TYPE=$1
+fi
+if [ -z "$HOTPLUG_TYPE" ]; then
+	HOTPLUG_TYPE="?"
+fi
+
+hostname=$(uci get system.@system[0].hostname)
+if [ "$HOSTNAME" = "$hostname" ]; then
+	unset HOSTNAME
+fi
+unset HOME
+unset LOGNAME
+unset PATH
+unset PWD
+unset SHLVL
+unset TERM
+unset USER
+
+/usr/bin/env | /usr/bin/sort | /usr/bin/logger -t "hotplug[$HOTPLUG_TYPE]"
